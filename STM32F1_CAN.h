@@ -7,10 +7,9 @@
 #define __STM32F1_CAN_H__
 
 #include <Arduino.h>
-#include "stm32f1xx_hal.h"
 
-
-
+//#define INTTX
+#define NEW_LIB // use modified lib, see https://github.com/jiauka/STM32F1_CAN
 typedef struct CanMsgTypeDef
 {
   uint32_t id;    /*!< Specifies the extended identifier.
@@ -29,9 +28,9 @@ typedef struct CanMsgTypeDef
 #endif
 
 #if !defined(SIZE_TX_BUFFER)
-#define SIZE_TX_BUFFER  8 // transmit ring buffer size
+#define SIZE_TX_BUFFER  16 // transmit ring buffer size
 
-#define NUM_MAILBOXES   3 // architecture specific STM32F103Cx have 3 mailboxes
+#define NUM_MAILBOXES   2 // architecture specific STM32F103Cx have 3 mailboxes
 
 typedef struct RingbufferTypeDef {
     volatile uint16_t head;
@@ -89,11 +88,20 @@ class STM32F1_CAN
     uint32_t ringBufferCount (RingbufferTypeDef &ring);
   public:
     RingbufferTypeDef rxRing;
+#ifndef NEW_LIB 
     RingbufferTypeDef txRing;
+#else
+    RingbufferTypeDef txRing1;
+    RingbufferTypeDef txRing2;
+#endif
   private:
     volatile CanMsgTypeDef *rx_buffer;
-    volatile CanMsgTypeDef *tx_buffer;
-    RingbufferTypeDef * txRings[NUM_MAILBOXES];
+#ifndef NEW_LIB   
+  volatile CanMsgTypeDef *tx_buffer;
+#else
+  volatile CanMsgTypeDef *tx_buffer0;
+  volatile CanMsgTypeDef *tx_buffer1;
+#endif
 };
 
 //extern STM32F1_CAN Can0;

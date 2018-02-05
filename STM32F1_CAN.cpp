@@ -1,19 +1,15 @@
 #include "STM32F1_CAN.h"
-#include "stm32f1xx_hal.h"
-#include "stm32f1xx.h"
 
 static CAN_HandleTypeDef CanHandle;
+
+#define DEBUG(x) x
+
+static bool tx0Done=false;
 
 STM32F1_CAN::STM32F1_CAN() {
 	numTxMailboxes=NUM_MAILBOXES;
 	sizeRxBuffer=SIZE_RX_BUFFER;
 	sizeTxBuffer=SIZE_TX_BUFFER;
-    rx_buffer=0;
-    tx_buffer=0;
-   // Initialize all message box spesific ring buffers to 0.
-    for(int i=0; i<getNumMailBoxes(); i++) {
-      txRings[i]=0;
-    }
 }
 
 STM32F1_CAN& STM32F1_CAN::getInstance()
@@ -29,6 +25,8 @@ void STM32F1_CAN::begin(bool UseAltPins) {
 	static CanRxMsgTypeDef RxMessage;
 	CAN_FilterConfTypeDef sFilterConfig;
 	GPIO_InitTypeDef GPIO_InitStruct;
+	
+	DEBUG(Serial3.begin(115200));
 	initializeBuffers();
 	__HAL_RCC_CAN1_CLK_ENABLE();
 
@@ -74,6 +72,8 @@ void STM32F1_CAN::begin(bool UseAltPins) {
 	CanHandle.Init.RFLM = DISABLE;
 	CanHandle.Init.TXFP = ENABLE; // JCB ENABLE  ;
 	CanHandle.Init.Mode = CAN_MODE_NORMAL;
+//Uncomment next line to test without a physical can transceiver
+	CanHandle.Init.Mode = CAN_MODE_NORMAL;
 	CanHandle.Init.SJW = CAN_SJW_1TQ;
 	CanHandle.Init.BS1 = CAN_BS1_3TQ;
 	CanHandle.Init.BS2 = CAN_BS2_5TQ;
@@ -102,18 +102,17 @@ void STM32F1_CAN::begin(bool UseAltPins) {
 //    		__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
 	HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
 	HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
-
-#ifdef INTTX
+#if defined(INTTX) ||  defined(NEW_LIB) 
 	HAL_NVIC_SetPriority(CAN1_TX_IRQn, 5, 0);
 	HAL_NVIC_EnableIRQ(CAN1_TX_IRQn);
 	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_TME);
 #endif
-
 }
 
 bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
+#ifndef NEW_LIB
 	bool ret=true;
-	
+#ifdef INTTX
 	CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
 	CanHandle.pTxMsg->DLC = msg.len;
 	CanHandle.pTxMsg->IDE = CAN_ID_EXT;
@@ -121,7 +120,8 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 	for(uint32_t i = 0; i < msg.len; i++)
 		CanHandle.pTxMsg->Data[i] = msg.Data[i];
 	if ( wait_sent ) {
-		if(HAL_CAN_Transmit(&CanHandle, 100) != HAL_OK) {
+
+		if(HAL_CAN_Transmit(&CanHandle, 10) != HAL_OK) {
 			ret= false;
 		}
 	}
@@ -130,29 +130,91 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 		uint8_t prio = (uint8_t) ((msg.id >> 26) & 0x7);
 		if(HAL_CAN_Transmit_IT(&CanHandle) !=HAL_OK) {
 			if(STM32F1_CAN::getInstance().addToRingBuffer(STM32F1_CAN::getInstance().txRing, msg)==false) {
+				DEBUG(Serial3.println("TX full"));
+
 				ret= false;; // no more room
 			}
 		}
 	}
-#if 0
+#else
+
 	CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
 	CanHandle.pTxMsg->DLC = msg.len;
 	CanHandle.pTxMsg->IDE = CAN_ID_EXT;
 	CanHandle.pTxMsg->ExtId = msg.id;
 	for(uint32_t i = 0; i < msg.len; i++)
-	CanHandle.pTxMsg->Data[i] = msg.Data[i];
-
+		CanHandle.pTxMsg->Data[i] = msg.Data[i];
 	if(HAL_CAN_Transmit(&CanHandle, 10) != HAL_OK) {
 		ret= false;
 	}
-	else
-	ret= true;
-#endif	
+#endif
 	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
 	return ret;
+#else // NEW_LIB
+	bool ret=true;
+
+	CanTxMsgTypeDef txMsg;
+#if 0
+	ret=true;
+	CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
+	CanHandle.pTxMsg->DLC = msg.len;
+	CanHandle.pTxMsg->IDE = CAN_ID_EXT;
+	CanHandle.pTxMsg->ExtId = msg.id;
+	for(uint32_t i = 0; i < msg.len; i++)
+		CanHandle.pTxMsg->Data[i] = msg.Data[i];
+	if(HAL_CAN_Transmit(&CanHandle, 10) != HAL_OK) {
+		ret= false;
+	}
+#else
+	txMsg.RTR = CAN_RTR_DATA;
+	txMsg.DLC = msg.len;
+	txMsg.IDE = CAN_ID_EXT;
+	txMsg.ExtId = msg.id;
+	for(uint32_t i = 0; i < msg.len; i++)
+		txMsg.Data[i] = msg.Data[i];
+	if ( wait_sent ) {
+		tx0Done=false;
+	    if(HAL_CAN_Transmit_MBOX(&CanHandle,&txMsg, CAN_TXMAILBOX_0,100) != HAL_OK) {
+			DEBUG(Serial3.println("Tx0 KO"));
+			ret = false;
+	    }
+		DEBUG(Serial3.println("Tx0 OK"));
+	}
+	else
+	{
+		uint8_t prio = (uint8_t) ((msg.id >> 26) & 0x7);
+		if(prio<4) {
+			if(HAL_CAN_Transmit_IT_MBOX(&CanHandle,&txMsg,CAN_TXMAILBOX_1) !=HAL_OK) {
+				ret=false;
+			}
+			else {
+				if(STM32F1_CAN::getInstance().addToRingBuffer(STM32F1_CAN::getInstance().txRing1, msg)!=true)
+					ret=false;
+			}
+		}
+		else {
+			if(HAL_CAN_Transmit_IT_MBOX(&CanHandle,&txMsg,CAN_TXMAILBOX_2) !=HAL_OK) {
+				ret=false;
+			}
+			else {
+				if(STM32F1_CAN::getInstance().addToRingBuffer(STM32F1_CAN::getInstance().txRing2, msg)!=true)
+					ret=false;
+			}
+		}
+		if(ret==false) {
+			DEBUG(Serial3.println("TXxx full"));
+		}
+	}
+#endif
+	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
+	return ret;
+
+#endif // NEW_LIB
+
 }
 
 bool STM32F1_CAN::read(CanMsgTypeDef &msg) {
+   __HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);  // Needed for openocd!
     return removeFromRingBuffer(rxRing, msg);
 }
 
@@ -161,9 +223,18 @@ void STM32F1_CAN::initializeBuffers() {
     	return;
   
     // set up the transmit and receive ring buffers
+#ifndef NEW_LIB   
     if(tx_buffer==0)
     	tx_buffer=new CanMsgTypeDef[sizeTxBuffer];
     initRingBuffer(txRing, tx_buffer, sizeTxBuffer);
+#else // NEW_LIB
+    if(tx_buffer0==0)
+    	tx_buffer0=new CanMsgTypeDef[sizeTxBuffer];
+    initRingBuffer(txRing1, tx_buffer0, sizeTxBuffer);
+    if(tx_buffer1==0)
+    	tx_buffer1=new CanMsgTypeDef[sizeTxBuffer];
+    initRingBuffer(txRing2, tx_buffer1, sizeTxBuffer);
+#endif //NEW_LIB
     if(rx_buffer==0)
     	rx_buffer=new CanMsgTypeDef[sizeRxBuffer];
 
@@ -271,22 +342,80 @@ uint32_t STM32F1_CAN::ringBufferCount(RingbufferTypeDef &ring)
 
 
 extern "C" void CAN1_RX0_IRQHandler(void) {
+#ifdef NEW_LIB
+	HAL_CAN_IRQHandler_MBOX(&CanHandle);
+#else // NEW_LIB
 	HAL_CAN_IRQHandler(&CanHandle);
+#endif // NEW_LIB
 }
-
 void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* _canHandle) {
 	CanMsgTypeDef msg;
-	msg.id=_canHandle->pRxMsg->ExtId;
-	msg.len=_canHandle->pRxMsg->DLC;
-	memcpy(msg.Data,_canHandle->pRxMsg->Data,msg.len);
-    STM32F1_CAN::getInstance().addToRingBuffer(STM32F1_CAN::getInstance().rxRing, msg);
-    if (HAL_CAN_Receive_IT(_canHandle, CAN_FIFO0) != HAL_OK)
-    {
+    if (HAL_CAN_Receive_IT(_canHandle, CAN_FIFO0) == HAL_OK)  {
+		msg.id=_canHandle->pRxMsg->ExtId;
+		msg.len=_canHandle->pRxMsg->DLC;
+		memcpy(msg.Data,_canHandle->pRxMsg->Data,msg.len);
+		STM32F1_CAN::getInstance().addToRingBuffer(STM32F1_CAN::getInstance().rxRing, msg);
+	}
+	else {
+		DEBUG(Serial3.println("error RX"));
       __HAL_CAN_ENABLE_IT(_canHandle, CAN_IT_FMP0);  // set interrupt flag for RX FIFO0 if CAN locked
     }
+    __HAL_CAN_ENABLE_IT(_canHandle, CAN_IT_FMP0);  // set interrupt flag for RX FIFO0
+
+}
+#ifdef NEW_LIB
+extern "C" void CAN1_TX_IRQHandler(void) {
+	HAL_CAN_IRQHandler_MBOX(&CanHandle);
+}
+void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* _canHandle)
+{
+//	TxMailboxCompleteCallback(_canHandle);
+//	DEBUG(Serial3.println("error TX2"));
+	(void)(_canHandle);
+//	DEBUG(Serial3.println("T0"));
+//	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
+	tx0Done=true;
 }
 
+void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* _canHandle)
+{
+	CanMsgTypeDef frame;
+	CanTxMsgTypeDef txMsg;
+    if(STM32F1_CAN::getInstance().removeFromRingBuffer(STM32F1_CAN::getInstance().txRing1, frame)) {
+    	txMsg.RTR = CAN_RTR_DATA;
+    	txMsg.DLC = frame.len;
+    	txMsg.IDE = CAN_ID_EXT;
+    	txMsg.ExtId = frame.id;
+		for(uint32_t i = 0; i < frame.len; i++)
+			txMsg.Data[i] = frame.Data[i];
+		if(HAL_CAN_Transmit_IT_MBOX(_canHandle,&txMsg, CAN_TXMAILBOX_1) !=HAL_OK) {
+			//Error handle();
+			DEBUG(Serial3.println("error TX0"));
+		}
+	}
+	DEBUG(Serial3.println("T1"));
+}
+void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* _canHandle)
+{
+	CanMsgTypeDef frame;
+	CanTxMsgTypeDef txMsg;
+    if(STM32F1_CAN::getInstance().removeFromRingBuffer(STM32F1_CAN::getInstance().txRing2, frame)) {
+    	txMsg.RTR = CAN_RTR_DATA;
+    	txMsg.DLC = frame.len;
+    	txMsg.IDE = CAN_ID_EXT;
+    	txMsg.ExtId = frame.id;
+		for(uint32_t i = 0; i < frame.len; i++)
+			txMsg.Data[i] = frame.Data[i];
+		if(HAL_CAN_Transmit_IT_MBOX(_canHandle,&txMsg, CAN_TXMAILBOX_2) !=HAL_OK) {
+			//Error handle();
+			DEBUG(Serial3.println("error TX1"));
+		}
+	}
+	DEBUG(Serial3.println("T2"));
+}
 
+#else //NEW_LIB
+#ifdef INTTX
 extern "C" void CAN1_TX_IRQHandler(void) {
 	HAL_CAN_IRQHandler(&CanHandle);
 }
@@ -296,14 +425,35 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* _canHandle)
 	CanMsgTypeDef frame;
 
     if(STM32F1_CAN::getInstance().removeFromRingBuffer(STM32F1_CAN::getInstance().txRing, frame)) {
-		CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
-		CanHandle.pTxMsg->DLC = frame.len;
-		CanHandle.pTxMsg->IDE = CAN_ID_EXT;
-		CanHandle.pTxMsg->ExtId = frame.id;
+		_canHandle->pTxMsg->RTR = CAN_RTR_DATA;
+		_canHandle->pTxMsg->DLC = frame.len;
+		_canHandle->pTxMsg->IDE = CAN_ID_EXT;
+		_canHandle->pTxMsg->ExtId = frame.id;
 		for(uint32_t i = 0; i < frame.len; i++)
-			CanHandle.pTxMsg->Data[i] = frame.Data[i];
-		if(HAL_CAN_Transmit_IT(&CanHandle) !=HAL_OK) {
-			//Serial3.println("error");
+			_canHandle->pTxMsg->Data[i] = frame.Data[i];
+		if(HAL_CAN_Transmit_IT(_canHandle) !=HAL_OK) {
+			//Error handle();
+			DEBUG(Serial3.println("error TX"));
 		}
 	}
+}
+#else
+extern "C" void CAN1_TX_IRQHandler(void) {
+	asm ("nop"); //Do nothing, usefull to insert BP
+}
+#endif
+#endif // NEW_LIB
+void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan) {
+	DEBUG(Serial3.print("errorCB"));
+	DEBUG(Serial3.println(hcan->ErrorCode));
+	HAL_CAN_Receive_IT(hcan, CAN_FIFO0);
+//    		__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
+	HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
+	HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+#if defined(INTTX) ||  defined(NEW_LIB)
+	HAL_NVIC_SetPriority(CAN1_TX_IRQn, 5, 0);
+	HAL_NVIC_EnableIRQ(CAN1_TX_IRQn);
+	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_TME);
+#endif
+
 }
