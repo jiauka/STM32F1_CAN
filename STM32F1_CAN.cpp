@@ -4,7 +4,6 @@ static CAN_HandleTypeDef CanHandle;
 
 #define DEBUG(x) x
 
-static bool tx0Done=false;
 
 STM32F1_CAN::STM32F1_CAN() {
 	numTxMailboxes=NUM_MAILBOXES;
@@ -173,12 +172,9 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 	for(uint32_t i = 0; i < msg.len; i++)
 		txMsg.Data[i] = msg.Data[i];
 	if ( wait_sent ) {
-		tx0Done=false;
 	    if(HAL_CAN_Transmit_MBOX(&CanHandle,&txMsg, CAN_TXMAILBOX_0,100) != HAL_OK) {
-			DEBUG(Serial3.println("Tx0 KO"));
 			ret = false;
 	    }
-		DEBUG(Serial3.println("Tx0 OK"));
 	}
 	else
 	{
@@ -369,12 +365,7 @@ extern "C" void CAN1_TX_IRQHandler(void) {
 }
 void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* _canHandle)
 {
-//	TxMailboxCompleteCallback(_canHandle);
-//	DEBUG(Serial3.println("error TX2"));
 	(void)(_canHandle);
-//	DEBUG(Serial3.println("T0"));
-//	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
-	tx0Done=true;
 }
 
 void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* _canHandle)
@@ -393,7 +384,6 @@ void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* _canHandle)
 			DEBUG(Serial3.println("error TX0"));
 		}
 	}
-	DEBUG(Serial3.println("T1"));
 }
 void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* _canHandle)
 {
@@ -411,7 +401,6 @@ void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* _canHandle)
 			DEBUG(Serial3.println("error TX1"));
 		}
 	}
-	DEBUG(Serial3.println("T2"));
 }
 
 #else //NEW_LIB
@@ -447,7 +436,6 @@ void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan) {
 	DEBUG(Serial3.print("errorCB"));
 	DEBUG(Serial3.println(hcan->ErrorCode));
 	HAL_CAN_Receive_IT(hcan, CAN_FIFO0);
-//    		__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
 	HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
 	HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
 #if defined(INTTX) ||  defined(NEW_LIB)
