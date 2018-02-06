@@ -6,15 +6,18 @@ static CAN_HandleTypeDef CanHandle;
 
 
 STM32F1_CAN::STM32F1_CAN() {
-	numTxMailboxes=NUM_MAILBOXES;
-	sizeRxBuffer=SIZE_RX_BUFFER;
-	sizeTxBuffer=SIZE_TX_BUFFER;
+	sizeRxBuffer=SIZE_RX_BUFFER; //default value, use setRxBufferSize to change it before begin
+#ifndef NEW_LIB 
+	sizeTxBuffer=SIZE_TX_BUFFER; //default value, use setTxBufferSize to change it before begin
+#else
+	for(int i=0; i < NUM_BUFFERED_MBOXES; i++)
+		sizeTxBuffer[i]=SIZE_TX_BUFFER; //default value, use setTxBufferSize to change it before begin
+#endif
 }
 
 STM32F1_CAN& STM32F1_CAN::getInstance()
 {
     static STM32F1_CAN theOneAndOnly;
-
     return theOneAndOnly;
 }
 
@@ -112,11 +115,12 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 #ifndef NEW_LIB
 	bool ret=true;
 #ifdef INTTX
+	__HAL_CAN_DISABLE_IT(&CanHandle, CAN_IT_TME);
 	CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
 	CanHandle.pTxMsg->DLC = msg.len;
 	CanHandle.pTxMsg->IDE = CAN_ID_EXT;
 	CanHandle.pTxMsg->ExtId = msg.id;
-	for(uint32_t i = 0; i < msg.len; i++)
+	for(uint8_t i = 0; i < msg.len; i++)
 		CanHandle.pTxMsg->Data[i] = msg.Data[i];
 	if ( wait_sent ) {
 
@@ -135,13 +139,14 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 			}
 		}
 	}
+	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_TME);
 #else
 
 	CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
 	CanHandle.pTxMsg->DLC = msg.len;
 	CanHandle.pTxMsg->IDE = CAN_ID_EXT;
 	CanHandle.pTxMsg->ExtId = msg.id;
-	for(uint32_t i = 0; i < msg.len; i++)
+	for(uint8_t i = 0; i < msg.len; i++)
 		CanHandle.pTxMsg->Data[i] = msg.Data[i];
 	if(HAL_CAN_Transmit(&CanHandle, 10) != HAL_OK) {
 		ret= false;
@@ -151,15 +156,15 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 	return ret;
 #else // NEW_LIB
 	bool ret=true;
-
 	CanTxMsgTypeDef txMsg;
+	__HAL_CAN_DISABLE_IT(&CanHandle, CAN_IT_TME);
 #if 0
 	ret=true;
 	CanHandle.pTxMsg->RTR = CAN_RTR_DATA;
 	CanHandle.pTxMsg->DLC = msg.len;
 	CanHandle.pTxMsg->IDE = CAN_ID_EXT;
 	CanHandle.pTxMsg->ExtId = msg.id;
-	for(uint32_t i = 0; i < msg.len; i++)
+	for(uint8_t i = 0; i < msg.len; i++)
 		CanHandle.pTxMsg->Data[i] = msg.Data[i];
 	if(HAL_CAN_Transmit(&CanHandle, 10) != HAL_OK) {
 		ret= false;
@@ -169,7 +174,7 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 	txMsg.DLC = msg.len;
 	txMsg.IDE = CAN_ID_EXT;
 	txMsg.ExtId = msg.id;
-	for(uint32_t i = 0; i < msg.len; i++)
+	for(uint8_t i = 0; i < msg.len; i++)
 		txMsg.Data[i] = msg.Data[i];
 	if ( wait_sent ) {
 	    if(HAL_CAN_Transmit_MBOX(&CanHandle,&txMsg, CAN_TXMAILBOX_0,100) != HAL_OK) {
@@ -202,7 +207,8 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 		}
 	}
 #endif
-	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);
+	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_TME);
+	__HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);	
 	return ret;
 
 #endif // NEW_LIB
@@ -210,8 +216,11 @@ bool STM32F1_CAN::write(const CanMsgTypeDef &msg,bool wait_sent) {
 }
 
 bool STM32F1_CAN::read(CanMsgTypeDef &msg) {
-   __HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0);  // Needed for openocd!
-    return removeFromRingBuffer(rxRing, msg);
+	bool ret;
+  __HAL_CAN_DISABLE_IT(&CanHandle, CAN_IT_FMP0); 
+  ret = removeFromRingBuffer(rxRing, msg);
+  __HAL_CAN_ENABLE_IT(&CanHandle, CAN_IT_FMP0); 
+  return ret;
 }
 
 void STM32F1_CAN::initializeBuffers() {
@@ -225,11 +234,11 @@ void STM32F1_CAN::initializeBuffers() {
     initRingBuffer(txRing, tx_buffer, sizeTxBuffer);
 #else // NEW_LIB
     if(tx_buffer0==0)
-    	tx_buffer0=new CanMsgTypeDef[sizeTxBuffer];
-    initRingBuffer(txRing1, tx_buffer0, sizeTxBuffer);
+    	tx_buffer0=new CanMsgTypeDef[sizeTxBuffer[0]];
+    initRingBuffer(txRing1, tx_buffer0, sizeTxBuffer[0]);
     if(tx_buffer1==0)
-    	tx_buffer1=new CanMsgTypeDef[sizeTxBuffer];
-    initRingBuffer(txRing2, tx_buffer1, sizeTxBuffer);
+    	tx_buffer1=new CanMsgTypeDef[sizeTxBuffer[1]];
+    initRingBuffer(txRing2, tx_buffer1, sizeTxBuffer[1]);
 #endif //NEW_LIB
     if(rx_buffer==0)
     	rx_buffer=new CanMsgTypeDef[sizeRxBuffer];
@@ -335,7 +344,12 @@ uint32_t STM32F1_CAN::ringBufferCount(RingbufferTypeDef &ring)
 
     return((uint32_t)entries);
 }
-
+#ifdef NEW_LIB
+void STM32F1_CAN::setMailBoxTxBufferSize(uint8_t mbox, uint16_t size){
+	if(mbox <NUM_BUFFERED_MBOXES)
+		sizeTxBuffer[mbox] = size;
+}
+#endif
 
 extern "C" void CAN1_RX0_IRQHandler(void) {
 #ifdef NEW_LIB
@@ -345,7 +359,7 @@ extern "C" void CAN1_RX0_IRQHandler(void) {
 #endif // NEW_LIB
 }
 void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* _canHandle) {
-	CanMsgTypeDef msg;
+	STM32F1_CAN::CanMsgTypeDef msg;
     if (HAL_CAN_Receive_IT(_canHandle, CAN_FIFO0) == HAL_OK)  {
 		msg.id=_canHandle->pRxMsg->ExtId;
 		msg.len=_canHandle->pRxMsg->DLC;
@@ -370,7 +384,7 @@ void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* _canHandle)
 
 void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* _canHandle)
 {
-	CanMsgTypeDef frame;
+	STM32F1_CAN::CanMsgTypeDef frame;
 	CanTxMsgTypeDef txMsg;
     if(STM32F1_CAN::getInstance().removeFromRingBuffer(STM32F1_CAN::getInstance().txRing1, frame)) {
     	txMsg.RTR = CAN_RTR_DATA;
@@ -387,7 +401,7 @@ void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* _canHandle)
 }
 void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* _canHandle)
 {
-	CanMsgTypeDef frame;
+	STM32F1_CAN::CanMsgTypeDef frame;
 	CanTxMsgTypeDef txMsg;
     if(STM32F1_CAN::getInstance().removeFromRingBuffer(STM32F1_CAN::getInstance().txRing2, frame)) {
     	txMsg.RTR = CAN_RTR_DATA;
@@ -411,7 +425,7 @@ extern "C" void CAN1_TX_IRQHandler(void) {
 
 void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* _canHandle)
 {
-	CanMsgTypeDef frame;
+	STM32F1_CAN::CanMsgTypeDef frame;
 
     if(STM32F1_CAN::getInstance().removeFromRingBuffer(STM32F1_CAN::getInstance().txRing, frame)) {
 		_canHandle->pTxMsg->RTR = CAN_RTR_DATA;
