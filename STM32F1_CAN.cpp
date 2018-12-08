@@ -29,6 +29,7 @@ void STM32F1_CAN::begin(bool UseAltPins) {
 	GPIO_InitTypeDef GPIO_InitStruct;
 	
 	DEBUG(Serial3.begin(115200));
+	DEBUG(Serial3.println("STM32F1_CAN:Begin"));
 	initializeBuffers();
 	__HAL_RCC_CAN1_CLK_ENABLE();
 

@@ -9,7 +9,7 @@
 #include <Arduino.h>
 
 //#define INTTX
-#define NEW_LIB // use modified lib, see https://github.com/jiauka/STM32F1_CAN
+//#define NEW_LIB // use modified lib, see https://github.com/jiauka/STM32F1_CAN
 
 #if !defined(SIZE_RX_BUFFER)
 #define SIZE_RX_BUFFER  16 // receive incoming ring buffer default size
