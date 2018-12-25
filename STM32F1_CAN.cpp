@@ -51,6 +51,8 @@ void STM32F1_CAN::begin(bool UseAltPins) {
 		HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 	} 
 	else {
+		/* Enable GPIOA clock */
+		__HAL_RCC_GPIOA_CLK_ENABLE();
 		__HAL_RCC_AFIO_CLK_ENABLE();
 		/* CAN1 RX GPIO pin configuration */
 		GPIO_InitStruct.Pin = GPIO_PIN_11;
